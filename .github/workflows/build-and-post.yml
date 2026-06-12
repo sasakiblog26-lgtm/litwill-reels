@@ -1,0 +1,170 @@
+name: build-and-post
+
+# queue/ への push をトリガーに動画を合成し、Instagram に投稿、Slack に通知する。
+# output/ への push は paths を queue/ に限定しているため再トリガーされない。
+
+on:
+  push:
+    paths:
+      - "queue/**.json"
+  workflow_dispatch:
+    inputs:
+      queue_file:
+        description: "処理する queue JSON のパス（例 queue/2026-06-12.json）。空なら push 最新を自動検出"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-and-post
+  cancel-in-progress: false
+
+jobs:
+  build-and-post:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    services:
+      voicevox:
+        image: voicevox/voicevox_engine:cpu-ubuntu20.04-latest
+        ports:
+          - 50021:50021
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: 対象 queue JSON を特定
+        id: pick
+        shell: bash
+        run: |
+          set -euo pipefail
+          INPUT="${{ github.event.inputs.queue_file }}"
+          if [ -n "$INPUT" ]; then
+            TARGET="$INPUT"
+          else
+            # push されたコミットで追加/変更された queue/*.json のうち最新の1件
+            TARGET="$(git diff --name-only --diff-filter=AM HEAD~1 HEAD -- 'queue/*.json' | grep -v 'queue/sample.json' | sort | tail -n 1 || true)"
+            if [ -z "$TARGET" ]; then
+              TARGET="$(git diff --name-only --diff-filter=AM HEAD~1 HEAD -- 'queue/*.json' | sort | tail -n 1 || true)"
+            fi
+          fi
+          if [ -z "$TARGET" ] || [ ! -f "$TARGET" ]; then
+            echo "❌ 処理対象の queue JSON が見つかりませんでした (TARGET='$TARGET')"
+            exit 1
+          fi
+          echo "対象: $TARGET"
+          echo "target=$TARGET" >> "$GITHUB_OUTPUT"
+
+      - name: ffmpeg と Noto Sans CJK をインストール
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ffmpeg fonts-noto-cjk
+
+      - name: Node 20 をセットアップ
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: VOICEVOX ENGINE の起動を待機
+        shell: bash
+        run: |
+          for i in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:50021/version > /dev/null; then
+              echo "VOICEVOX 起動OK"; exit 0
+            fi
+            echo "待機中... ($i/60)"; sleep 2
+          done
+          echo "❌ VOICEVOX ENGINE が起動しませんでした"; exit 1
+
+      - name: 動画を合成
+        id: build
+        shell: bash
+        env:
+          VOICEVOX_URL: http://127.0.0.1:50021
+        run: |
+          set -euo pipefail
+          OUT="$(node scripts/build-video.mjs "${{ steps.pick.outputs.target }}")"
+          echo "$OUT"
+          RESULT_LINE="$(echo "$OUT" | grep '^RESULT ' | tail -n 1 | sed 's/^RESULT //')"
+          OUTFILE="$(echo "$RESULT_LINE" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>console.log(JSON.parse(s).outFile))')"
+          PRODUCT="$(echo "$RESULT_LINE" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>console.log(JSON.parse(s).productName))')"
+          echo "outfile=$OUTFILE" >> "$GITHUB_OUTPUT"
+          echo "product=$PRODUCT" >> "$GITHUB_OUTPUT"
+
+      - name: caption を一時ファイルに展開
+        id: caption
+        shell: bash
+        run: |
+          node -e 'const fs=require("fs");const d=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));fs.writeFileSync(".caption.txt",d.caption)' "${{ steps.pick.outputs.target }}"
+          echo "file=.caption.txt" >> "$GITHUB_OUTPUT"
+
+      - name: 動画を output/ にコミットして push
+        id: commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add output/
+          if git diff --cached --quiet; then
+            echo "コミットする変更がありません（既存と同一）"
+          else
+            git commit -m "chore(output): リール動画を追加 ${{ steps.build.outputs.outfile }}"
+            git push origin HEAD:${{ github.ref_name }}
+          fi
+          RAW="https://raw.githubusercontent.com/${{ github.repository }}/${{ github.ref_name }}/${{ steps.build.outputs.outfile }}"
+          echo "raw_url=$RAW" >> "$GITHUB_OUTPUT"
+          echo "公開URL: $RAW"
+
+      - name: Instagram に投稿（env 無しは DRY-RUN）
+        id: publish
+        shell: bash
+        env:
+          IG_USER_ID: ${{ secrets.IG_USER_ID }}
+          IG_ACCESS_TOKEN: ${{ secrets.IG_ACCESS_TOKEN }}
+        run: |
+          set -euo pipefail
+          OUT="$(node scripts/publish-instagram.mjs --video-url "${{ steps.commit.outputs.raw_url }}" --caption-file "${{ steps.caption.outputs.file }}")"
+          echo "$OUT"
+          if echo "$OUT" | grep -q '"status":"published"'; then
+            echo "mode=投稿済み" >> "$GITHUB_OUTPUT"
+          else
+            echo "mode=DRY-RUN" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: 成功通知
+        if: success()
+        shell: bash
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: |
+          MSG="✅ 本日のリール準備完了: ${{ steps.build.outputs.product }} / ${{ steps.publish.outputs.mode }} / 動画: ${{ steps.commit.outputs.raw_url }}"
+          echo "$MSG"
+          echo "$MSG" >> "$GITHUB_STEP_SUMMARY"
+          if [ -n "${SLACK_WEBHOOK_URL:-}" ]; then
+            curl -fsS -X POST -H 'Content-type: application/json' \
+              --data "$(node -e 'console.log(JSON.stringify({text:process.argv[1]}))' "$MSG")" \
+              "$SLACK_WEBHOOK_URL" || echo "Slack 通知に失敗（処理は成功）"
+          else
+            echo "SLACK_WEBHOOK_URL 未設定のため Slack 通知はスキップ"
+          fi
+
+      - name: 失敗通知
+        if: failure()
+        shell: bash
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: |
+          MSG="❌ 失敗: ${{ github.workflow }} / job=${{ github.job }} / 詳細: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          echo "$MSG"
+          echo "$MSG" >> "$GITHUB_STEP_SUMMARY"
+          if [ -n "${SLACK_WEBHOOK_URL:-}" ]; then
+            curl -fsS -X POST -H 'Content-type: application/json' \
+              --data "$(node -e 'console.log(JSON.stringify({text:process.argv[1]}))' "$MSG")" \
+              "$SLACK_WEBHOOK_URL" || true
+          fi
