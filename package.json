@@ -1,0 +1,17 @@
+{
+  "name": "litwill-reels",
+  "version": "1.0.0",
+  "description": "Litwill Garden 占いブランド向け Instagram リール自動生成・投稿パイプライン",
+  "type": "module",
+  "private": true,
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "node scripts/build-video.mjs",
+    "publish": "node scripts/publish-instagram.mjs",
+    "test": "node --test",
+    "check": "node --check scripts/build-video.mjs && node --check scripts/publish-instagram.mjs"
+  },
+  "license": "UNLICENSED"
+}

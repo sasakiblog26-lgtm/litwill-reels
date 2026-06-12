@@ -1,0 +1,5 @@
+node_modules/
+.caption.txt
+*.log
+.DS_Store
+# output/*.mp4 は CI が push するため無視しない

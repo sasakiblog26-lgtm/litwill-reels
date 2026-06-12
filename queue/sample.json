@@ -1,0 +1,24 @@
+{
+  "date": "2026-06-12",
+  "template": "single",
+  "products": [
+    {
+      "name": "アメジスト さざれ石 100g",
+      "price": "1,280円",
+      "imageUrl": "https://placehold.co/800x800/9B8BBF/ffffff/png?text=Amethyst",
+      "affiliateUrl": "https://hb.afl.rakuten.co.jp/hgc/DUMMY-AFFILIATE-ID/?pc=https%3A%2F%2Fitem.rakuten.co.jp%2Fdummy-shop%2Famethyst-100g%2F",
+      "point": "浄化の定番として親しまれる石。玄関や枕元に置く人が多いそう"
+    }
+  ],
+  "script": [
+    {"text": "今日の開運アイテムをご紹介します", "duration_hint": 3},
+    {"text": "紫色がうつくしい、アメジストのさざれ石です", "duration_hint": 4},
+    {"text": "古くから浄化の石として親しまれてきました", "duration_hint": 4},
+    {"text": "玄関や枕元にそっと置くだけ", "duration_hint": 3},
+    {"text": "お部屋の空気を整えたいときの相棒に", "duration_hint": 4},
+    {"text": "1袋100グラム、お試しにちょうどよい量です", "duration_hint": 4},
+    {"text": "気になった方は、ぜひのぞいてみてくださいね", "duration_hint": 4}
+  ],
+  "caption": "今日の開運アイテム✨\n\n紫がうつくしいアメジストのさざれ石。\n古くから「浄化の石」として親しまれてきました。\n玄関や枕元にそっと置くだけ。お部屋の空気を整えたいときの相棒にいかがでしょう。\n\n商品リンクはプロフィールから🔗\n\n#PR #開運 #パワーストーン #アメジスト #さざれ石 #浄化 #占い #Litwillガーデン",
+  "voice_speaker": 2
+}
