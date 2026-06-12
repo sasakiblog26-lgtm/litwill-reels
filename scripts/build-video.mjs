@@ -207,7 +207,7 @@ function outroDraws(totalDuration) {
       `enable='between(t,${from},${to})'`,
     ].join(":");
   return [
-    mk("詳しくはプロフィールのリンクから🔗", 820, 50, "white"),
+    mk("詳しくはプロフィールのリンクから", 820, 50, "white"),
     mk(BRAND.name, 980, 64, "0xF6D365"),
     mk(BRAND.voicevoxCredit, 1120, 34, "white@0.85"),
   ];
@@ -329,7 +329,9 @@ async function main() {
         HEIGHT * 0.5
       )}:force_original_aspect_ratio=decrease[p0]`
     );
-    filters.push(`[${lastV}][p0]overlay=x=(W-w)/2:y=(H-h)/2-120[withimg]`);
+    filters.push(
+      `[${lastV}][p0]overlay=x=(W-w)/2:y=(H-h)/2-120:enable='between(t,0,${timeline.narrationEnd.toFixed(3)})'[withimg]`
+    );
     lastV = "withimg";
   }
 

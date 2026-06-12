@@ -4,6 +4,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import {
   escapeDrawText,
+  stripEmoji,
   buildTimeline,
   buildRankingSections,
   validateQueue,
@@ -99,6 +100,18 @@ test("validateQueue は ranking の件数違反を弾く", () => {
 
 test("sumDurations は負値や非数を無視して合計する", () => {
   assert.equal(sumDurations([1, 2, -3, NaN, 4]), 7);
+});
+
+test("stripEmoji は SMP 絵文字（🔗など）を除去する", () => {
+  assert.equal(stripEmoji("詳しくはプロフィールのリンクから🔗"), "詳しくはプロフィールのリンクから");
+  assert.equal(stripEmoji("テキスト🎉のみ"), "テキストのみ");
+});
+
+test("escapeDrawText は絵文字を含む文字列から絵文字を除去しつつエスケープする", () => {
+  const result = escapeDrawText("リンク🔗はこちら:詳細");
+  assert.ok(!result.includes("🔗"), "絵文字が除去されている");
+  assert.ok(result.includes("\\:"), "コロンがエスケープされている");
+  assert.equal(result, "リンクはこちら\\:詳細");
 });
 
 test("同梱の queue/sample.json はスキーマ検証を通る", async () => {

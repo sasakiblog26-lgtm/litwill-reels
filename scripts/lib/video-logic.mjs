@@ -14,14 +14,33 @@ export const BRAND = {
 };
 
 /**
+ * Noto Sans CJK で描画できない絵文字・記号を除去するサニタイザ。
+ * drawtext に渡す前に通すことで豆腐化（□）を防ぐ。
+ * 除去対象:
+ *   U+1F000–U+1FFFF  Emoji / Mahjong / Domino 等の SMP 絵文字
+ *   U+2600–U+27BF    Miscellaneous Symbols, Dingbats 等
+ *   U+FE00–U+FE0F    Variation Selectors（絵文字修飾子）
+ * @param {string} text
+ * @returns {string}
+ */
+export function stripEmoji(text) {
+  if (text == null) return "";
+  return String(text)
+    .replace(/[\u{1F000}-\u{1FFFF}]/gu, "")
+    .replace(/[☀-➿]/g, "")
+    .replace(/[︀-️]/g, "");
+}
+
+/**
  * drawtext / 各種フィルタに渡すテキストをエスケープする。
  * ffmpeg の filtergraph では `:` `'` `\` `%` などが特殊扱いされるため退避する。
+ * 絵文字は Noto Sans CJK で描画できないため、エスケープ前に stripEmoji を通す。
  * @param {string} text
  * @returns {string}
  */
 export function escapeDrawText(text) {
   if (text == null) return "";
-  return String(text)
+  return stripEmoji(String(text))
     .replace(/\\/g, "\\\\")
     .replace(/:/g, "\\:")
     .replace(/'/g, "’") // アポストロフィは安全な右シングルクォートに置換
