@@ -24,7 +24,8 @@ concurrency:
 jobs:
   build-and-post:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # 横動画(landscape)は5〜10分尺になり VOICEVOX 合成とエンコードに時間がかかるため 45 分に引き上げ
+    timeout-minutes: 45
 
     services:
       voicevox:
@@ -142,10 +143,13 @@ jobs:
         run: |
           set -euo pipefail
           TEMPLATE="$(node -e 'const fs=require("fs");console.log(JSON.parse(fs.readFileSync(process.argv[1],"utf8")).template||"")' "${{ steps.pick.outputs.target }}")"
-          OUT="$(node scripts/publish-instagram.mjs --video-url "${{ steps.commit.outputs.raw_url }}" --caption-file "${{ steps.caption.outputs.file }}" --template "$TEMPLATE")"
+          ORIENTATION="$(node -e 'const fs=require("fs");console.log(JSON.parse(fs.readFileSync(process.argv[1],"utf8")).orientation||"")' "${{ steps.pick.outputs.target }}")"
+          OUT="$(node scripts/publish-instagram.mjs --video-url "${{ steps.commit.outputs.raw_url }}" --caption-file "${{ steps.caption.outputs.file }}" --template "$TEMPLATE" --orientation "$ORIENTATION")"
           echo "$OUT"
           if echo "$OUT" | grep -q '"status":"published"'; then
             echo "mode=投稿済み" >> "$GITHUB_OUTPUT"
+          elif echo "$OUT" | grep -q '"status":"skipped-landscape"'; then
+            echo "mode=IG投稿スキップ(横動画)" >> "$GITHUB_OUTPUT"
           elif echo "$OUT" | grep -q '"status":"skipped-edu"'; then
             echo "mode=IG投稿スキップ(edu)" >> "$GITHUB_OUTPUT"
           else

@@ -13,6 +13,10 @@ import {
   wrapByChars,
   voicevoxCreditFor,
   resolveLineSfx,
+  resolveLayout,
+  LAYOUTS,
+  WIDTH,
+  HEIGHT,
   SFX_AUTO_FIRST,
   SFX_AUTO_LAST,
   OUTRO_SEC,
@@ -312,6 +316,64 @@ test("resolveLineSfx は日本語ファイル名の効果音も返す", () => {
     script: [{ text: "a", sfx: "データ表示1" }],
   };
   assert.deepEqual(resolveLineSfx(data), ["データ表示1"]);
+});
+
+// ---- orientation / レイアウト ----------------------------------------------
+
+test("resolveLayout は orientation 省略時に portrait を返す", () => {
+  assert.equal(resolveLayout({}), LAYOUTS.portrait);
+  assert.equal(resolveLayout({ orientation: undefined }), LAYOUTS.portrait);
+  assert.equal(resolveLayout(null), LAYOUTS.portrait);
+});
+
+test("resolveLayout は orientation=landscape で landscape を返す", () => {
+  assert.equal(resolveLayout({ orientation: "landscape" }), LAYOUTS.landscape);
+  assert.equal(LAYOUTS.landscape.width, 1920);
+  assert.equal(LAYOUTS.landscape.height, 1080);
+});
+
+test("resolveLayout は未知の orientation を portrait にフォールバック", () => {
+  assert.equal(resolveLayout({ orientation: "square" }), LAYOUTS.portrait);
+});
+
+test("LAYOUTS.portrait の width/height は WIDTH/HEIGHT と一致する（後方互換）", () => {
+  assert.equal(LAYOUTS.portrait.width, WIDTH);
+  assert.equal(LAYOUTS.portrait.height, HEIGHT);
+});
+
+test("validateQueue は orientation の正常2値を通す", () => {
+  const base = {
+    date: "d",
+    template: "edu",
+    title: "タイトル",
+    script: [{ text: "a" }],
+    caption: "本文",
+  };
+  assert.deepEqual(validateQueue({ ...base, orientation: "portrait" }), { ok: true });
+  assert.deepEqual(validateQueue({ ...base, orientation: "landscape" }), { ok: true });
+});
+
+test("validateQueue は orientation 省略を許容する", () => {
+  const data = {
+    date: "d",
+    template: "edu",
+    title: "タイトル",
+    script: [{ text: "a" }],
+    caption: "本文",
+  };
+  assert.deepEqual(validateQueue(data), { ok: true });
+});
+
+test("validateQueue は不正な orientation を弾く", () => {
+  const data = {
+    date: "d",
+    template: "edu",
+    title: "タイトル",
+    orientation: "square",
+    script: [{ text: "a" }],
+    caption: "本文",
+  };
+  assert.throws(() => validateQueue(data), /orientation/);
 });
 
 test("同梱の queue/sample.json はスキーマ検証を通る", async () => {

@@ -1,8 +1,10 @@
 #!/usr/bin/env node
-// build-video.mjs — queue JSON から 1080x1920 のリール動画を合成する。
+// build-video.mjs — queue JSON から動画を合成する。
+// orientation により縦(1080x1920 リール/ショート)・横(1920x1080)を切り替える（省略時は縦）。
 //
 // 使い方:  node scripts/build-video.mjs queue/2026-06-12.json
-// 出力:    output/<date>.mp4 （1080x1920 / H.264 / AAC / 30fps）
+// 出力:    output/<date>.mp4（portrait）/ output/<date>-landscape.mp4（landscape）
+//          いずれも H.264 / AAC / 30fps
 //
 // 前提（CI 環境で用意される）:
 //   - VOICEVOX ENGINE が http://127.0.0.1:50021 で稼働
@@ -18,8 +20,6 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
-  WIDTH,
-  HEIGHT,
   FPS,
   OUTRO_SEC,
   BRAND,
@@ -30,6 +30,7 @@ import {
   layoutTitle,
   voicevoxCreditFor,
   resolveLineSfx,
+  resolveLayout,
 } from "./lib/video-logic.mjs";
 
 const VOICEVOX_URL = process.env.VOICEVOX_URL || "http://127.0.0.1:50021";
@@ -219,17 +220,17 @@ function fontArg() {
 }
 
 // 字幕（画面下部・白文字・黒縁）の drawtext を 1 行ぶん組み立てる
-function subtitleDraw(line) {
+function subtitleDraw(line, layout) {
   const t = escapeDrawText(line.text);
   return [
     `drawtext=${fontArg()}`,
     `text='${t}'`,
     `fontcolor=white`,
-    `fontsize=52`,
+    `fontsize=${layout.subtitle.fontSize}`,
     `borderw=6`,
     `bordercolor=black@0.9`,
     `x=(w-text_w)/2`,
-    `y=h-360`,
+    `y=${layout.subtitle.yExpr}`,
     `box=1`,
     `boxcolor=black@0.35`,
     `boxborderw=24`,
@@ -255,25 +256,26 @@ function prBadgeDraw() {
 }
 
 // 順位バッジ（ranking 用・中央上）
-function rankBadgeDraw(section) {
+function rankBadgeDraw(section, layout) {
   const t = escapeDrawText(section.rankLabel);
   return [
     `drawtext=${fontArg()}`,
     `text='${t}'`,
     `fontcolor=0xF6D365`,
-    `fontsize=88`,
+    `fontsize=${layout.rankBadge.fontSize}`,
     `borderw=6`,
     `bordercolor=black@0.9`,
     `x=(w-text_w)/2`,
-    `y=220`,
+    `y=${layout.rankBadge.y}`,
     `enable='between(t,${section.start.toFixed(3)},${section.end.toFixed(3)})'`,
   ].join(":");
 }
 
 // アウトロ（末尾 OUTRO_SEC 秒）のテキスト群
-function outroDraws(totalDuration) {
+function outroDraws(totalDuration, layout) {
   const from = (totalDuration - OUTRO_SEC).toFixed(3);
   const to = totalDuration.toFixed(3);
+  const { ys, sizes } = layout.outro;
   const mk = (text, y, size, color) =>
     [
       `drawtext=${fontArg()}`,
@@ -287,18 +289,19 @@ function outroDraws(totalDuration) {
       `enable='between(t,${from},${to})'`,
     ].join(":");
   return [
-    mk("詳しくはプロフィールのリンクから", 820, 50, "white"),
-    mk(BRAND.name, 980, 64, "0xF6D365"),
-    mk(BRAND.voicevoxCredit, 1120, 34, "white@0.85"),
+    mk("詳しくはプロフィールのリンクから", ys[0], sizes[0], "white"),
+    mk(BRAND.name, ys[1], sizes[1], "0xF6D365"),
+    mk(BRAND.voicevoxCredit, ys[2], sizes[2], "white@0.85"),
   ];
 }
 
 // edu 用アウトロ（YouTubeショート向け）。誘導文が「概要欄から」になる。
 // VOICEVOX クレジットはライセンス要件のため話者に追従させて必ず表示する。
-function eduOutroDraws(totalDuration, speaker) {
+function eduOutroDraws(totalDuration, speaker, layout) {
   const from = (totalDuration - OUTRO_SEC).toFixed(3);
   const to = totalDuration.toFixed(3);
   const credit = voicevoxCreditFor(speaker);
+  const { ys, sizes } = layout.outro;
   const mk = (text, y, size, color) =>
     [
       `drawtext=${fontArg()}`,
@@ -312,18 +315,18 @@ function eduOutroDraws(totalDuration, speaker) {
       `enable='between(t,${from},${to})'`,
     ].join(":");
   return [
-    mk("詳しくは概要欄から🔗", 820, 50, "white"),
-    mk(BRAND.name, 980, 64, "0xF6D365"),
-    mk(credit, 1120, 34, "white@0.85"),
+    mk("詳しくは概要欄から🔗", ys[0], sizes[0], "white"),
+    mk(BRAND.name, ys[1], sizes[1], "0xF6D365"),
+    mk(credit, ys[2], sizes[2], "white@0.85"),
   ];
 }
 
 // edu 用タイトル（画面上部〜中央上寄りに大きく常時表示・白文字黒縁）。
 // layoutTitle が決めた行配列とフォントサイズを縦に積む。
-function titleDraws(title) {
-  const { lines, fontSize } = layoutTitle(title);
+function titleDraws(title, layout) {
+  const { lines, fontSize } = layoutTitle(title, layout.title);
   const lineHeight = Math.round(fontSize * 1.45);
-  const startY = 340; // 上寄せ（順位バッジ位置よりやや下）
+  const startY = layout.title.startY; // 上寄せ（順位バッジ位置よりやや下）
   return lines.map((ln, i) => {
     const t = escapeDrawText(ln);
     return [
@@ -348,6 +351,10 @@ async function main() {
   }
   const data = JSON.parse(await readFile(queuePath, "utf8"));
   validateQueue(data);
+
+  // 向き（orientation）に応じたレイアウトを解決（省略時 portrait）
+  const layout = resolveLayout(data);
+  const orientation = data.orientation === "landscape" ? "landscape" : "portrait";
 
   const speaker = Number.isInteger(data.voice_speaker) ? data.voice_speaker : 2;
   const work = path.join(tmpdir(), `reel-${data.date}-${process.pid}`);
@@ -429,7 +436,7 @@ async function main() {
     "-t",
     String(total),
     "-i",
-    `gradients=s=${WIDTH}x${HEIGHT}:c0=${BRAND.colorTop}:c1=${BRAND.colorBottom}:x0=0:y0=0:x1=0:y1=${HEIGHT}:d=${Math.ceil(total)}:speed=0.01`
+    `gradients=s=${layout.width}x${layout.height}:c0=${BRAND.colorTop}:c1=${BRAND.colorBottom}:x0=0:y0=0:x1=0:y1=${layout.height}:d=${Math.ceil(total)}:speed=0.01`
   );
   // [1] 無音オーディオは narration を使うので別途不要。narration を入力に追加。
   inputs.push("-i", narration);
@@ -441,12 +448,19 @@ async function main() {
   const filters = [];
 
   // 背景を基準解像度/fps へ
-  filters.push(`[0:v]scale=${WIDTH}:${HEIGHT},fps=${FPS},format=yuv420p[bg]`);
+  filters.push(`[0:v]scale=${layout.width}:${layout.height},fps=${FPS},format=yuv420p[bg]`);
+
+  // 画像スケール/オーバーレイのレイアウト値（向きで変わる）
+  const imgW = Math.round(layout.width * layout.image.wRatio);
+  const imgH = Math.round(layout.height * layout.image.hRatio);
+  // overlay の縦オフセット（負値はそのまま "-120"、正値は "+40" になるよう整形）
+  const yOff = layout.image.yOffset;
+  const yOffExpr = yOff < 0 ? `${yOff}` : `+${yOff}`;
 
   let lastV = "bg";
   if (data.template === "edu") {
     // edu: 商品画像なし。タイトルを上部に大きく常時表示するだけ。
-    const draws = titleDraws(data.title).join(",");
+    const draws = titleDraws(data.title, layout).join(",");
     filters.push(`[${lastV}]${draws}[titled]`);
     lastV = "titled";
   } else if (data.template === "ranking" && imgPaths.length === 3) {
@@ -455,31 +469,27 @@ async function main() {
     sections.forEach((sec, i) => {
       const imgIdx = imgInputStart + i;
       filters.push(
-        `[${imgIdx}:v]scale=${Math.round(WIDTH * 0.82)}:${Math.round(
-          HEIGHT * 0.5
-        )}:force_original_aspect_ratio=decrease[p${i}]`
+        `[${imgIdx}:v]scale=${imgW}:${imgH}:force_original_aspect_ratio=decrease[p${i}]`
       );
       const next = i === sections.length - 1 ? "withimg" : `ov${i}`;
       filters.push(
-        `[${lastV}][p${i}]overlay=x=(W-w)/2:y=(H-h)/2-120:enable='between(t,${sec.start.toFixed(
+        `[${lastV}][p${i}]overlay=x=(W-w)/2:y=(H-h)/2${yOffExpr}:enable='between(t,${sec.start.toFixed(
           3
         )},${sec.end.toFixed(3)})'[${next}]`
       );
       lastV = next;
     });
     // 順位バッジ
-    const rankDraws = sections.map((s) => rankBadgeDraw(s)).join(",");
+    const rankDraws = sections.map((s) => rankBadgeDraw(s, layout)).join(",");
     filters.push(`[${lastV}]${rankDraws}[ranked]`);
     lastV = "ranked";
   } else {
     // single: 1枚を中央に等倍フィット
     filters.push(
-      `[${imgInputStart}:v]scale=${Math.round(WIDTH * 0.82)}:${Math.round(
-        HEIGHT * 0.5
-      )}:force_original_aspect_ratio=decrease[p0]`
+      `[${imgInputStart}:v]scale=${imgW}:${imgH}:force_original_aspect_ratio=decrease[p0]`
     );
     filters.push(
-      `[${lastV}][p0]overlay=x=(W-w)/2:y=(H-h)/2-120:enable='between(t,0,${timeline.narrationEnd.toFixed(3)})'[withimg]`
+      `[${lastV}][p0]overlay=x=(W-w)/2:y=(H-h)/2${yOffExpr}:enable='between(t,0,${timeline.narrationEnd.toFixed(3)})'[withimg]`
     );
     lastV = "withimg";
   }
@@ -491,18 +501,18 @@ async function main() {
       `drawtext=${fontArg()}`,
       `text='${escapeDrawText(product0.name)}'`,
       `fontcolor=white`,
-      `fontsize=46`,
+      `fontsize=${layout.productName.fontSize}`,
       `borderw=5`,
       `bordercolor=black@0.9`,
       `x=(w-text_w)/2`,
-      `y=h-520`,
+      `y=${layout.productName.yExpr}`,
     ].join(":");
     filters.push(`[${lastV}]${nameDraw}[named]`);
     lastV = "named";
   }
 
   // 字幕（全行）
-  const subDraws = timeline.lines.map((l) => subtitleDraw(l)).join(",");
+  const subDraws = timeline.lines.map((l) => subtitleDraw(l, layout)).join(",");
   filters.push(`[${lastV}]${subDraws}[subbed]`);
   lastV = "subbed";
 
@@ -510,8 +520,8 @@ async function main() {
   // edu はアフィリエイトではないため PR バッジを出さず、YouTube 向けアウトロを使う。
   const overlayDraws =
     data.template === "edu"
-      ? eduOutroDraws(total, speaker).join(",")
-      : [prBadgeDraw(), ...outroDraws(total)].join(",");
+      ? eduOutroDraws(total, speaker, layout).join(",")
+      : [prBadgeDraw(), ...outroDraws(total, layout)].join(",");
   filters.push(`[${lastV}]${overlayDraws}[vout]`);
 
   // オーディオ: narration を全体尺へ apad（末尾アウトロ分の無音を足す）
@@ -520,7 +530,9 @@ async function main() {
   );
 
   const filterComplex = filters.join(";");
-  const outFile = path.join(OUTPUT_DIR, `${data.date}.mp4`);
+  // portrait は従来どおり <date>.mp4、landscape は <date>-landscape.mp4
+  const outName = orientation === "landscape" ? `${data.date}-landscape.mp4` : `${data.date}.mp4`;
+  const outFile = path.join(OUTPUT_DIR, outName);
 
   const ffArgs = [
     "-y",
@@ -565,6 +577,7 @@ async function main() {
       JSON.stringify({
         outFile: path.relative(ROOT, outFile).replace(/\\/g, "/"),
         date: data.date,
+        orientation,
         productName:
           data.template === "edu"
             ? data.title

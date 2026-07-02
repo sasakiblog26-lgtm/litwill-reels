@@ -24,6 +24,7 @@ function parseArgs(argv) {
     else if (a === "--caption") args.caption = argv[++i];
     else if (a === "--caption-file") args.captionFile = argv[++i];
     else if (a === "--template") args.template = argv[++i];
+    else if (a === "--orientation") args.orientation = argv[++i];
   }
   return args;
 }
@@ -62,6 +63,13 @@ async function main() {
   if (!args.videoUrl) {
     console.error("--video-url は必須です");
     process.exit(2);
+  }
+  // 横動画（landscape / 1920x1080）はリール（9:16 必須）に投稿できない。
+  // 明示的にスキップして正常終了する（動画自体は生成・公開 URL 化される）。
+  if (args.orientation === "landscape") {
+    console.log("landscape（横動画）→ Instagram投稿スキップ（リールは 9:16 のみ対応）");
+    console.log("PUBLISH_RESULT " + JSON.stringify({ status: "skipped-landscape" }));
+    process.exit(0);
   }
   // edu テンプレート（教養ショート / YouTube 向け・アフィリエイトなし）は
   // Instagram には投稿しない。明示的にスキップして正常終了する。

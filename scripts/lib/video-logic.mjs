@@ -6,6 +6,45 @@ export const HEIGHT = 1920;
 export const FPS = 30;
 export const OUTRO_SEC = 1.5; // 末尾の案内クレジット秒数
 
+// 動画の向き（orientation）ごとのレイアウトプリセット。
+//  - portrait  … 1080x1920（リール/ショート・従来の縦動画）
+//  - landscape … 1920x1080（横動画・YouTube 横長など。IG リールには非対応）
+// portrait の各値は build-video.mjs にベタ書きされていた従来値と完全一致させており、
+// orientation 省略時（＝portrait）の出力は 1 バイトも変わらない。
+export const LAYOUTS = {
+  portrait: {
+    width: 1080,
+    height: 1920,
+    subtitle: { fontSize: 52, yExpr: "h-360" },
+    rankBadge: { fontSize: 88, y: 220 },
+    title: { startY: 340, maxWidth: 960, baseFontSize: 78, minFontSize: 44, maxLines: 3 },
+    outro: { ys: [820, 980, 1120], sizes: [50, 64, 34] },
+    productName: { yExpr: "h-520", fontSize: 46 },
+    image: { wRatio: 0.82, hRatio: 0.5, yOffset: -120 },
+  },
+  landscape: {
+    width: 1920,
+    height: 1080,
+    subtitle: { fontSize: 48, yExpr: "h-140" },
+    rankBadge: { fontSize: 80, y: 90 },
+    title: { startY: 140, maxWidth: 1600, baseFontSize: 84, minFontSize: 48, maxLines: 2 },
+    outro: { ys: [430, 560, 690], sizes: [48, 64, 32] },
+    productName: { yExpr: "h-260", fontSize: 44 },
+    image: { wRatio: 0.5, hRatio: 0.62, yOffset: -40 },
+  },
+};
+
+/**
+ * queue JSON の orientation からレイアウトプリセットを解決する。
+ * 省略時・未知値は portrait にフォールバックする（後方互換）。
+ * @param {any} data queue JSON
+ * @returns {typeof LAYOUTS.portrait}
+ */
+export function resolveLayout(data) {
+  const key = data?.orientation ?? "portrait";
+  return LAYOUTS[key] ?? LAYOUTS.portrait;
+}
+
 export const BRAND = {
   name: "Litwill Garden",
   colorTop: "0x1a1033", // 深紫
@@ -194,6 +233,15 @@ export function validateQueue(data) {
     typeof data.sfx_auto !== "boolean"
   )
     errs.push("sfx_auto は boolean である必要があります");
+
+  // 動画の向き（orientation）の検証。省略時は portrait 扱い（既存挙動を変えない）。
+  if (
+    data &&
+    Object.prototype.hasOwnProperty.call(data, "orientation") &&
+    data.orientation !== "portrait" &&
+    data.orientation !== "landscape"
+  )
+    errs.push('orientation は "portrait" / "landscape" のいずれかである必要があります');
 
   if (errs.length) {
     throw new Error("queue JSON 検証エラー:\n - " + errs.join("\n - "));
