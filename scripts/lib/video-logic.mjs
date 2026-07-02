@@ -25,7 +25,9 @@ export const LAYOUTS = {
   landscape: {
     width: 1920,
     height: 1080,
-    subtitle: { fontSize: 48, yExpr: "h-140" },
+    // 字幕は自動改行されないため、1920px 幅に 46 文字まで収まるサイズにする
+    // （CJK は 1 文字幅 ≒ fontSize。40px × 46 字 + box 余白 48px ≦ 1920px）
+    subtitle: { fontSize: 40, yExpr: "h-140" },
     rankBadge: { fontSize: 80, y: 90 },
     title: { startY: 140, maxWidth: 1600, baseFontSize: 84, minFontSize: 48, maxLines: 2 },
     outro: { ys: [430, 560, 690], sizes: [48, 64, 32] },
