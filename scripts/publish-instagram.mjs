@@ -23,6 +23,7 @@ function parseArgs(argv) {
     if (a === "--video-url") args.videoUrl = argv[++i];
     else if (a === "--caption") args.caption = argv[++i];
     else if (a === "--caption-file") args.captionFile = argv[++i];
+    else if (a === "--template") args.template = argv[++i];
   }
   return args;
 }
@@ -62,6 +63,14 @@ async function main() {
     console.error("--video-url は必須です");
     process.exit(2);
   }
+  // edu テンプレート（教養ショート / YouTube 向け・アフィリエイトなし）は
+  // Instagram には投稿しない。明示的にスキップして正常終了する。
+  if (args.template === "edu") {
+    console.log("edu template → Instagram投稿スキップ（YouTubeショート向け・非アフィリエイト）");
+    console.log("PUBLISH_RESULT " + JSON.stringify({ status: "skipped-edu" }));
+    process.exit(0);
+  }
+
   let caption = args.caption ?? "";
   if (args.captionFile) caption = await readFile(args.captionFile, "utf8");
 

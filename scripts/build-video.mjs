@@ -27,6 +27,8 @@ import {
   buildTimeline,
   buildRankingSections,
   validateQueue,
+  layoutTitle,
+  voicevoxCreditFor,
 } from "./lib/video-logic.mjs";
 
 const VOICEVOX_URL = process.env.VOICEVOX_URL || "http://127.0.0.1:50021";
@@ -213,6 +215,52 @@ function outroDraws(totalDuration) {
   ];
 }
 
+// edu 用アウトロ（YouTubeショート向け）。誘導文が「概要欄から」になる。
+// VOICEVOX クレジットはライセンス要件のため話者に追従させて必ず表示する。
+function eduOutroDraws(totalDuration, speaker) {
+  const from = (totalDuration - OUTRO_SEC).toFixed(3);
+  const to = totalDuration.toFixed(3);
+  const credit = voicevoxCreditFor(speaker);
+  const mk = (text, y, size, color) =>
+    [
+      `drawtext=${fontArg()}`,
+      `text='${escapeDrawText(text)}'`,
+      `fontcolor=${color}`,
+      `fontsize=${size}`,
+      `borderw=5`,
+      `bordercolor=black@0.9`,
+      `x=(w-text_w)/2`,
+      `y=${y}`,
+      `enable='between(t,${from},${to})'`,
+    ].join(":");
+  return [
+    mk("詳しくは概要欄から🔗", 820, 50, "white"),
+    mk(BRAND.name, 980, 64, "0xF6D365"),
+    mk(credit, 1120, 34, "white@0.85"),
+  ];
+}
+
+// edu 用タイトル（画面上部〜中央上寄りに大きく常時表示・白文字黒縁）。
+// layoutTitle が決めた行配列とフォントサイズを縦に積む。
+function titleDraws(title) {
+  const { lines, fontSize } = layoutTitle(title);
+  const lineHeight = Math.round(fontSize * 1.45);
+  const startY = 340; // 上寄せ（順位バッジ位置よりやや下）
+  return lines.map((ln, i) => {
+    const t = escapeDrawText(ln);
+    return [
+      `drawtext=${fontArg()}`,
+      `text='${t}'`,
+      `fontcolor=white`,
+      `fontsize=${fontSize}`,
+      `borderw=7`,
+      `bordercolor=black@0.9`,
+      `x=(w-text_w)/2`,
+      `y=${startY + i * lineHeight}`,
+    ].join(":");
+  });
+}
+
 // ---- メイン -----------------------------------------------------------------
 async function main() {
   const queuePath = process.argv[2];
@@ -267,11 +315,12 @@ async function main() {
     narration,
   ]);
 
-  // 4) 商品画像をダウンロード
+  // 4) 商品画像をダウンロード（edu は商品なしのため空）
+  const products = Array.isArray(data.products) ? data.products : [];
   const imgPaths = [];
-  for (let i = 0; i < data.products.length; i++) {
+  for (let i = 0; i < products.length; i++) {
     const ip = path.join(work, `product-${i}.img`);
-    await downloadImage(data.products[i].imageUrl, ip);
+    await downloadImage(products[i].imageUrl, ip);
     imgPaths.push(ip);
   }
 
@@ -300,7 +349,12 @@ async function main() {
   filters.push(`[0:v]scale=${WIDTH}:${HEIGHT},fps=${FPS},format=yuv420p[bg]`);
 
   let lastV = "bg";
-  if (data.template === "ranking" && imgPaths.length === 3) {
+  if (data.template === "edu") {
+    // edu: 商品画像なし。タイトルを上部に大きく常時表示するだけ。
+    const draws = titleDraws(data.title).join(",");
+    filters.push(`[${lastV}]${draws}[titled]`);
+    lastV = "titled";
+  } else if (data.template === "ranking" && imgPaths.length === 3) {
     const sections = buildRankingSections(3, timeline.narrationEnd);
     // 各商品画像を中央に等倍フィット（はみ出さないよう内接）し、セクション区間だけ overlay
     sections.forEach((sec, i) => {
@@ -336,7 +390,7 @@ async function main() {
   }
 
   // 商品名テロップ（画像の下・字幕より上）
-  const product0 = data.products[0];
+  const product0 = products[0];
   if (data.template === "single") {
     const nameDraw = [
       `drawtext=${fontArg()}`,
@@ -358,7 +412,11 @@ async function main() {
   lastV = "subbed";
 
   // PR バッジ常時 + アウトロ
-  const overlayDraws = [prBadgeDraw(), ...outroDraws(total)].join(",");
+  // edu はアフィリエイトではないため PR バッジを出さず、YouTube 向けアウトロを使う。
+  const overlayDraws =
+    data.template === "edu"
+      ? eduOutroDraws(total, speaker).join(",")
+      : [prBadgeDraw(), ...outroDraws(total)].join(",");
   filters.push(`[${lastV}]${overlayDraws}[vout]`);
 
   // オーディオ: narration を全体尺へ apad（末尾アウトロ分の無音を足す）
@@ -412,7 +470,10 @@ async function main() {
       JSON.stringify({
         outFile: path.relative(ROOT, outFile).replace(/\\/g, "/"),
         date: data.date,
-        productName: data.products.map((p) => p.name).join(" / "),
+        productName:
+          data.template === "edu"
+            ? data.title
+            : products.map((p) => p.name).join(" / "),
         durationSec: +total.toFixed(1),
       })
   );

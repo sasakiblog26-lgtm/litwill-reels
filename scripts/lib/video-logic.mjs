@@ -13,6 +13,24 @@ export const BRAND = {
   voicevoxCredit: "VOICEVOX:四国めたん",
 };
 
+// VOICEVOX speaker id → 話者名。クレジット表記に使う。
+// 未知の id は名称を断定しないため汎用表記へフォールバックする。
+export const VOICEVOX_SPEAKERS = {
+  2: "四国めたん", // 既定（ノーマル）
+  3: "ずんだもん",
+};
+
+/**
+ * speaker id からライセンス表記用のクレジット文字列を返す。
+ * 既定(2)は BRAND.voicevoxCredit と一致する。未知 id は "VOICEVOX"。
+ * @param {number} speaker
+ * @returns {string}
+ */
+export function voicevoxCreditFor(speaker) {
+  const name = VOICEVOX_SPEAKERS[speaker];
+  return name ? `VOICEVOX:${name}` : "VOICEVOX";
+}
+
 /**
  * Noto Sans CJK で描画できない絵文字・記号を除去するサニタイザ。
  * drawtext に渡す前に通すことで豆腐化（□）を防ぐ。
@@ -121,28 +139,90 @@ export function validateQueue(data) {
   const errs = [];
   if (!data || typeof data !== "object") errs.push("ルートがオブジェクトではありません");
   if (!data?.date) errs.push("date がありません");
-  if (data?.template !== "single" && data?.template !== "ranking")
-    errs.push('template は "single" か "ranking" のいずれかである必要があります');
-  if (!Array.isArray(data?.products) || data.products.length === 0)
-    errs.push("products が空です");
-  if (data?.template === "single" && data?.products?.length !== 1)
-    errs.push("single テンプレートでは products は1件である必要があります");
-  if (data?.template === "ranking" && data?.products?.length !== 3)
-    errs.push("ranking テンプレートでは products は3件である必要があります");
+  if (
+    data?.template !== "single" &&
+    data?.template !== "ranking" &&
+    data?.template !== "edu"
+  )
+    errs.push('template は "single" / "ranking" / "edu" のいずれかである必要があります');
+
+  if (data?.template === "edu") {
+    // 教養ショート: 商品なし・アフィリエイトなし・ブランド発信。
+    // title が必須で、products は不要（空配列 or 省略）。#PR も不要。
+    if (typeof data?.title !== "string" || data.title.trim().length === 0)
+      errs.push("edu テンプレートでは title（動画タイトル）が必須です");
+    if (Array.isArray(data?.products) && data.products.length > 0)
+      errs.push("edu テンプレートでは products は不要です（空配列または省略）");
+  } else {
+    // single / ranking: 従来どおり商品必須（既存挙動を変更しない）
+    if (!Array.isArray(data?.products) || data.products.length === 0)
+      errs.push("products が空です");
+    if (data?.template === "single" && data?.products?.length !== 1)
+      errs.push("single テンプレートでは products は1件である必要があります");
+    if (data?.template === "ranking" && data?.products?.length !== 3)
+      errs.push("ranking テンプレートでは products は3件である必要があります");
+    for (const [i, p] of (data?.products ?? []).entries()) {
+      if (!p?.imageUrl) errs.push(`products[${i}].imageUrl がありません`);
+      if (!p?.name) errs.push(`products[${i}].name がありません`);
+    }
+    // #PR はアフィリエイト投稿（single/ranking）のみ景表法対応で必須
+    if (data?.caption && !data.caption.includes("#PR"))
+      errs.push("caption に #PR が含まれていません（景表法対応で必須）");
+  }
+
   if (!Array.isArray(data?.script) || data.script.length === 0)
     errs.push("script が空です");
   if (typeof data?.caption !== "string" || data.caption.length === 0)
     errs.push("caption がありません");
-  if (data?.caption && !data.caption.includes("#PR"))
-    errs.push("caption に #PR が含まれていません（景表法対応で必須）");
-  for (const [i, p] of (data?.products ?? []).entries()) {
-    if (!p?.imageUrl) errs.push(`products[${i}].imageUrl がありません`);
-    if (!p?.name) errs.push(`products[${i}].name がありません`);
-  }
+
   if (errs.length) {
     throw new Error("queue JSON 検証エラー:\n - " + errs.join("\n - "));
   }
   return { ok: true };
+}
+
+/**
+ * タイトル文字列を、指定幅に収まるよう行分割＆フォントサイズを決める。
+ * drawtext は自動改行しないため、edu テンプレのタイトル描画で使う。
+ * CJK は概ね「1文字幅 ≒ フォントサイズ」として概算する。
+ *
+ * @param {string} title
+ * @param {{maxWidth?:number, baseFontSize?:number, minFontSize?:number, maxLines?:number}} [opts]
+ * @returns {{lines:string[], fontSize:number}}
+ */
+export function layoutTitle(title, opts = {}) {
+  const maxWidth = opts.maxWidth ?? 960; // 1080px 幅の内側マージンを考慮
+  const baseFontSize = opts.baseFontSize ?? 78;
+  const minFontSize = opts.minFontSize ?? 44;
+  const maxLines = opts.maxLines ?? 3;
+  const clean = String(title ?? "").trim();
+  if (!clean) return { lines: [""], fontSize: baseFontSize };
+
+  for (let fontSize = baseFontSize; fontSize >= minFontSize; fontSize -= 4) {
+    const perLine = Math.max(1, Math.floor(maxWidth / fontSize));
+    const lines = wrapByChars(clean, perLine);
+    if (lines.length <= maxLines) return { lines, fontSize };
+  }
+  // 最小サイズでも収まらない場合は最小サイズで maxLines 行に丸める
+  const perLine = Math.max(1, Math.floor(maxWidth / minFontSize));
+  const lines = wrapByChars(clean, perLine).slice(0, maxLines);
+  return { lines, fontSize: minFontSize };
+}
+
+/**
+ * サロゲートペアを壊さずに perLine 文字ずつ改行する。
+ * @param {string} text
+ * @param {number} perLine
+ * @returns {string[]}
+ */
+export function wrapByChars(text, perLine) {
+  const chars = Array.from(String(text ?? ""));
+  const n = Math.max(1, Math.floor(perLine));
+  const lines = [];
+  for (let i = 0; i < chars.length; i += n) {
+    lines.push(chars.slice(i, i + n).join(""));
+  }
+  return lines.length ? lines : [""];
 }
 
 /**

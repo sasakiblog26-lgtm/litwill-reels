@@ -129,10 +129,13 @@ jobs:
           IG_ACCESS_TOKEN: ${{ secrets.IG_ACCESS_TOKEN }}
         run: |
           set -euo pipefail
-          OUT="$(node scripts/publish-instagram.mjs --video-url "${{ steps.commit.outputs.raw_url }}" --caption-file "${{ steps.caption.outputs.file }}")"
+          TEMPLATE="$(node -e 'const fs=require("fs");console.log(JSON.parse(fs.readFileSync(process.argv[1],"utf8")).template||"")' "${{ steps.pick.outputs.target }}")"
+          OUT="$(node scripts/publish-instagram.mjs --video-url "${{ steps.commit.outputs.raw_url }}" --caption-file "${{ steps.caption.outputs.file }}" --template "$TEMPLATE")"
           echo "$OUT"
           if echo "$OUT" | grep -q '"status":"published"'; then
             echo "mode=投稿済み" >> "$GITHUB_OUTPUT"
+          elif echo "$OUT" | grep -q '"status":"skipped-edu"'; then
+            echo "mode=IG投稿スキップ(edu)" >> "$GITHUB_OUTPUT"
           else
             echo "mode=DRY-RUN" >> "$GITHUB_OUTPUT"
           fi
