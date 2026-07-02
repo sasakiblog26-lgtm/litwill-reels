@@ -38,6 +38,17 @@ jobs:
         with:
           fetch-depth: 2
 
+      # 効果音アセット（非公開リポ litwill-assets）を assets/ に checkout する。
+      # ASSETS_DEPLOY_KEY 未登録でも continue-on-error でジョブ全体は落とさない。
+      # 失敗時は assets/ が無いだけで、build-video.mjs が SFX なしで正常続行する。
+      - name: 効果音アセットを checkout（任意・失敗許容）
+        continue-on-error: true
+        uses: actions/checkout@v4
+        with:
+          repository: sasakiblog26-lgtm/litwill-assets
+          ssh-key: ${{ secrets.ASSETS_DEPLOY_KEY }}
+          path: assets
+
       - name: 対象 queue JSON を特定
         id: pick
         shell: bash
@@ -86,6 +97,7 @@ jobs:
         shell: bash
         env:
           VOICEVOX_URL: http://127.0.0.1:50021
+          SFX_DIR: assets/sfx
         run: |
           set -euo pipefail
           OUT="$(node scripts/build-video.mjs "${{ steps.pick.outputs.target }}")"

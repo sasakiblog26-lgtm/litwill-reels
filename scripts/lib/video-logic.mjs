@@ -175,10 +175,67 @@ export function validateQueue(data) {
   if (typeof data?.caption !== "string" || data.caption.length === 0)
     errs.push("caption がありません");
 
+  // 効果音（SFX）フィールドの検証。既存フィールドの挙動は変えない。
+  //  - script[].sfx: string（空文字可・拡張子なしのファイル名）
+  //  - sfx_auto: boolean（省略時 true・edu のみ有効）
+  if (Array.isArray(data?.script)) {
+    for (const [i, row] of data.script.entries()) {
+      if (
+        row &&
+        Object.prototype.hasOwnProperty.call(row, "sfx") &&
+        typeof row.sfx !== "string"
+      )
+        errs.push(`script[${i}].sfx は文字列である必要があります（空文字可）`);
+    }
+  }
+  if (
+    data &&
+    Object.prototype.hasOwnProperty.call(data, "sfx_auto") &&
+    typeof data.sfx_auto !== "boolean"
+  )
+    errs.push("sfx_auto は boolean である必要があります");
+
   if (errs.length) {
     throw new Error("queue JSON 検証エラー:\n - " + errs.join("\n - "));
   }
   return { ok: true };
+}
+
+// SFX 自動プリセット（edu テンプレ用）。明示指定のない先頭/末尾行に割り当てる。
+export const SFX_AUTO_FIRST = "Epic Whoosh"; // 1行目（つかみ）
+export const SFX_AUTO_LAST = "Epic Shine"; // 最終行（締め）
+
+/**
+ * script の各行に割り当てる効果音名（拡張子なし）を解決する純粋関数。
+ * ffmpeg を呼ばずにテストできるよう、割当ロジックだけをここに切り出す。
+ *
+ * ルール:
+ *  - 行に `sfx` が明示されていれば最優先。
+ *    - 非空文字列 → その効果音を使う（自動適用より優先）。
+ *    - 空文字（トリム後に空） → その行は効果音なし＝**無効化**（自動適用もしない）。
+ *  - `sfx` 未指定かつ edu テンプレかつ `sfx_auto`（省略時 true）が有効なら、
+ *    1行目に SFX_AUTO_FIRST、最終行に SFX_AUTO_LAST を自動適用。
+ *  - それ以外は null（効果音なし）。
+ *
+ * @param {any} data queue JSON
+ * @returns {(string|null)[]} script と同じ並びの効果音名 or null
+ */
+export function resolveLineSfx(data) {
+  const script = Array.isArray(data?.script) ? data.script : [];
+  const n = script.length;
+  const isEdu = data?.template === "edu";
+  const autoOn = isEdu && data?.sfx_auto !== false; // 省略時 true・edu のみ
+  return script.map((row, i) => {
+    if (row && Object.prototype.hasOwnProperty.call(row, "sfx")) {
+      const v = typeof row.sfx === "string" ? row.sfx.trim() : "";
+      return v.length ? v : null; // 空文字は無効化（自動適用もしない）
+    }
+    if (autoOn) {
+      if (i === 0) return SFX_AUTO_FIRST;
+      if (i === n - 1) return SFX_AUTO_LAST;
+    }
+    return null;
+  });
 }
 
 /**

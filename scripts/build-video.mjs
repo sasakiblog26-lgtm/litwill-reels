@@ -29,11 +29,15 @@ import {
   validateQueue,
   layoutTitle,
   voicevoxCreditFor,
+  resolveLineSfx,
 } from "./lib/video-logic.mjs";
 
 const VOICEVOX_URL = process.env.VOICEVOX_URL || "http://127.0.0.1:50021";
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const OUTPUT_DIR = path.join(ROOT, "output");
+
+// 効果音（SFX）の音量係数（ナレーションより控えめ）
+const SFX_VOLUME = 0.32;
 
 // ---- フォント解決 -----------------------------------------------------------
 // CI(Ubuntu) では fonts-noto-cjk が下記のいずれかに入る。最初に見つかったものを使う。
@@ -87,6 +91,80 @@ async function ffprobeDurationSec(file) {
   );
   const v = parseFloat(out);
   return Number.isFinite(v) ? v : 0;
+}
+
+// 音声ストリームのサンプルレート/チャンネル数を取得（ミックス出力を元WAVに合わせる用）
+async function ffprobeAudioStream(file) {
+  const out = await run(
+    "ffprobe",
+    [
+      "-v",
+      "error",
+      "-select_streams",
+      "a:0",
+      "-show_entries",
+      "stream=sample_rate,channels",
+      "-of",
+      "default=noprint_wrappers=1:nokey=1",
+      file,
+    ],
+    { capture: true }
+  );
+  const [sr, ch] = out.split(/\s+/);
+  return {
+    sampleRate: parseInt(sr, 10) || 24000,
+    channels: parseInt(ch, 10) || 1,
+  };
+}
+
+// ---- 効果音（SFX） ----------------------------------------------------------
+// SFX_DIR（既定 assets/sfx）を解決する。無ければ null（＝SFXなしで続行）。
+function resolveSfxDir() {
+  const raw = process.env.SFX_DIR || "assets/sfx";
+  const dir = path.isAbsolute(raw) ? raw : path.join(ROOT, raw);
+  if (!existsSync(dir)) {
+    console.warn(
+      `SFX_DIR が存在しないため効果音なしで続行します: ${dir}（Actions シークレット未登録時など）`
+    );
+    return null;
+  }
+  return dir;
+}
+
+// 拡張子なしの効果音名から実ファイルパスを解決する。見つからなければ null。
+function resolveSfxPath(dir, name) {
+  if (!dir || !name) return null;
+  const p = path.join(dir, `${name}.mp3`);
+  return existsSync(p) ? p : null;
+}
+
+// ナレーション WAV に効果音を行頭から重ねてミックスする。
+// - SFX は SFX_VOLUME 倍に減衰、amix duration=first で行長（ナレーション実測長）で切る
+// - normalize=0 でナレーション音量を維持（amix の自動減衰を無効化）
+// - 入力はすべて引数配列で渡す（スペース・日本語を含むパスでも安全）
+// - 出力フォーマットは元 WAV に合わせる（後段の concat -c copy を壊さない）
+async function mixLineWithSfx(lineWav, sfxPath, outPath, volume = SFX_VOLUME) {
+  const { sampleRate, channels } = await ffprobeAudioStream(lineWav);
+  const fc =
+    `[1:a]volume=${volume}[s];` +
+    `[0:a][s]amix=inputs=2:duration=first:dropout_transition=0:normalize=0[a]`;
+  await run("ffmpeg", [
+    "-y",
+    "-i",
+    lineWav,
+    "-i",
+    sfxPath,
+    "-filter_complex",
+    fc,
+    "-map",
+    "[a]",
+    "-ar",
+    String(sampleRate),
+    "-ac",
+    String(channels),
+    outPath,
+  ]);
+  return outPath;
 }
 
 // ---- VOICEVOX --------------------------------------------------------------
@@ -277,14 +355,31 @@ async function main() {
   await mkdir(work, { recursive: true });
   await mkdir(OUTPUT_DIR, { recursive: true });
 
-  // 1) ナレーション合成
+  // 1) ナレーション合成（＋任意の効果音ミックス）
   await waitForVoicevox();
   console.log(`VOICEVOX 起動確認OK (${VOICEVOX_URL})。${data.script.length}行を合成します。`);
+  const sfxAssign = resolveLineSfx(data); // 各行の効果音名 or null（純粋ロジック）
+  const sfxDir = resolveSfxDir(); // null なら SFX なしで続行
   const wavPaths = [];
   for (let i = 0; i < data.script.length; i++) {
     const wp = path.join(work, `line-${String(i).padStart(2, "0")}.wav`);
     await synthesizeLine(data.script[i].text, speaker, wp);
-    wavPaths.push(wp);
+    let finalWp = wp;
+    const sfxName = sfxAssign[i];
+    if (sfxName) {
+      const sfxPath = resolveSfxPath(sfxDir, sfxName);
+      if (sfxPath) {
+        const mixed = path.join(work, `line-${String(i).padStart(2, "0")}-mix.wav`);
+        await mixLineWithSfx(wp, sfxPath, mixed);
+        finalWp = mixed;
+        console.log(`  行${i}: 効果音「${sfxName}」をミックスしました`);
+      } else {
+        console.warn(
+          `  行${i}: 効果音「${sfxName}」が見つからないため SFX なしで続行します`
+        );
+      }
+    }
+    wavPaths.push(finalWp);
   }
 
   // 2) 各 WAV 実測秒 → タイムライン

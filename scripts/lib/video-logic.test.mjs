@@ -12,6 +12,9 @@ import {
   layoutTitle,
   wrapByChars,
   voicevoxCreditFor,
+  resolveLineSfx,
+  SFX_AUTO_FIRST,
+  SFX_AUTO_LAST,
   OUTRO_SEC,
 } from "./video-logic.mjs";
 
@@ -211,6 +214,104 @@ test("voicevoxCreditFor は既定(2)で四国めたん、未知idで汎用表記
   assert.equal(voicevoxCreditFor(2), "VOICEVOX:四国めたん");
   assert.equal(voicevoxCreditFor(3), "VOICEVOX:ずんだもん");
   assert.equal(voicevoxCreditFor(999), "VOICEVOX");
+});
+
+// ---- 効果音（SFX） ---------------------------------------------------------
+
+test("validateQueue は script[].sfx が文字列なら通す（空文字可）", () => {
+  const data = {
+    date: "d",
+    template: "edu",
+    title: "タイトル",
+    script: [{ text: "a", sfx: "Bell Ding" }, { text: "b", sfx: "" }],
+    caption: "本文",
+  };
+  assert.deepEqual(validateQueue(data), { ok: true });
+});
+
+test("validateQueue は script[].sfx が非文字列だと弾く", () => {
+  const data = {
+    date: "d",
+    template: "edu",
+    title: "タイトル",
+    script: [{ text: "a", sfx: 123 }],
+    caption: "本文",
+  };
+  assert.throws(() => validateQueue(data), /sfx は文字列/);
+});
+
+test("validateQueue は sfx_auto が boolean なら通し、非booleanを弾く", () => {
+  const ok = {
+    date: "d",
+    template: "edu",
+    title: "タイトル",
+    sfx_auto: false,
+    script: [{ text: "a" }],
+    caption: "本文",
+  };
+  assert.deepEqual(validateQueue(ok), { ok: true });
+
+  const ng = { ...ok, sfx_auto: "yes" };
+  assert.throws(() => validateQueue(ng), /sfx_auto は boolean/);
+});
+
+test("resolveLineSfx は edu の先頭に Epic Whoosh・末尾に Epic Shine を自動適用", () => {
+  const data = {
+    template: "edu",
+    script: [{ text: "a" }, { text: "b" }, { text: "c" }],
+  };
+  const got = resolveLineSfx(data);
+  assert.deepEqual(got, [SFX_AUTO_FIRST, null, SFX_AUTO_LAST]);
+});
+
+test("resolveLineSfx は sfx_auto=false で自動適用しない", () => {
+  const data = {
+    template: "edu",
+    sfx_auto: false,
+    script: [{ text: "a" }, { text: "b" }],
+  };
+  assert.deepEqual(resolveLineSfx(data), [null, null]);
+});
+
+test("resolveLineSfx は明示 sfx を自動適用より優先する", () => {
+  const data = {
+    template: "edu",
+    script: [
+      { text: "a", sfx: "Magic Effect" }, // 先頭でも明示を優先
+      { text: "b", sfx: "Bell Ding" },
+      { text: "c" }, // 末尾は自動 Epic Shine
+    ],
+  };
+  assert.deepEqual(resolveLineSfx(data), [
+    "Magic Effect",
+    "Bell Ding",
+    SFX_AUTO_LAST,
+  ]);
+});
+
+test("resolveLineSfx は空文字指定で自動適用も無効化する", () => {
+  const data = {
+    template: "edu",
+    script: [{ text: "a", sfx: "" }, { text: "b" }, { text: "c", sfx: "  " }],
+  };
+  // 先頭は空文字で無効、末尾も空白のみ→無効
+  assert.deepEqual(resolveLineSfx(data), [null, null, null]);
+});
+
+test("resolveLineSfx は edu 以外では自動適用しない（明示のみ有効）", () => {
+  const data = {
+    template: "single",
+    script: [{ text: "a" }, { text: "b", sfx: "POP" }],
+  };
+  assert.deepEqual(resolveLineSfx(data), [null, "POP"]);
+});
+
+test("resolveLineSfx は日本語ファイル名の効果音も返す", () => {
+  const data = {
+    template: "edu",
+    script: [{ text: "a", sfx: "データ表示1" }],
+  };
+  assert.deepEqual(resolveLineSfx(data), ["データ表示1"]);
 });
 
 test("同梱の queue/sample.json はスキーマ検証を通る", async () => {
